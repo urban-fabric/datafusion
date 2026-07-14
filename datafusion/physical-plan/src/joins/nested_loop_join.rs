@@ -3845,6 +3845,43 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn test_nlj_memory_limited_fallback_with_empty_left() -> Result<()> {
+        // A limit small enough that even bookkeeping reservations fail, so the
+        // spill fallback engages while the left side yields zero batches. The
+        // join must treat the empty left as valid instead of raising
+        // "Left side produced no data to spill".
+        let task_ctx = task_ctx_with_memory_limit(1, 16)?;
+
+        let empty_left = build_table(
+            ("a1", &vec![]),
+            ("b1", &vec![]),
+            ("c1", &vec![]),
+            None,
+            Vec::new(),
+        );
+        let right = build_right_table();
+        let filter = prepare_join_filter();
+
+        match join_collect(empty_left, right, &JoinType::Inner, Some(filter), task_ctx).await {
+            Ok((_columns, batches, _metrics)) => {
+                assert!(batches.is_empty() || batches.iter().all(|b| b.num_rows() == 0));
+            }
+            // A resources error is acceptable under a 1-byte budget; an
+            // internal error is not.
+            Err(e) => {
+                assert!(
+                    matches!(
+                        e.find_root(),
+                        datafusion_common::DataFusionError::ResourcesExhausted(_)
+                    ),
+                    "expected ResourcesExhausted, got: {e}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_nlj_memory_limited_no_disk_falls_back_to_oom() -> Result<()> {
         // When disk is disabled, fallback is not possible and OOM should occur.
         use datafusion_execution::disk_manager::{DiskManagerBuilder, DiskManagerMode};

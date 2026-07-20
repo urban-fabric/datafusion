@@ -839,7 +839,7 @@ pub(crate) enum LeftLoadResult {
 async fn collect_left_input(
     mut stream: SendableRecordBatchStream,
     metrics: BuildProbeJoinMetrics,
-    mut reservation: MemoryReservation,
+    reservation: MemoryReservation,
     with_visited_left_side: bool,
     probe_threads_count: usize,
     spill_manager: Option<SpillManager>,
@@ -909,17 +909,18 @@ async fn collect_left_input(
     // Spill path: release the in-memory reservation, then stream the
     // buffered prefix, the batch that overflowed, and the remainder of the
     // original stream into one spill file.
-    let spill_manager = spill_manager
-        .expect("spill path is only reachable with a spill manager");
+    let spill_manager =
+        spill_manager.expect("spill path is only reachable with a spill manager");
     reservation.free();
     let buffered = std::mem::take(&mut batches)
         .into_iter()
         .chain(overflow_batch)
         .map(Ok);
-    let mut combined: SendableRecordBatchStream = Box::pin(crate::stream::RecordBatchStreamAdapter::new(
-        Arc::clone(&schema),
-        futures::stream::iter(buffered).chain(stream),
-    ));
+    let mut combined: SendableRecordBatchStream =
+        Box::pin(crate::stream::RecordBatchStreamAdapter::new(
+            Arc::clone(&schema),
+            futures::stream::iter(buffered).chain(stream),
+        ));
     let spilled = spill_manager
         .spill_record_batch_stream_and_return_max_batch_memory(
             &mut combined,
@@ -1464,15 +1465,15 @@ impl NestedLoopJoinStream {
     /// left child is never re-executed.
     fn initiate_fallback(&mut self, left_spill: Arc<LeftSpillData>) -> Result<()> {
         // Take ownership of Pending state
-        let context =
-            match std::mem::replace(&mut self.spill_state, SpillState::Disabled) {
-                SpillState::Pending { task_context } => task_context,
-                _ => {
-                    return internal_err!(
-                        "initiate_fallback called in non-Pending spill state"
-                    );
-                }
-            };
+        let context = match std::mem::replace(&mut self.spill_state, SpillState::Disabled)
+        {
+            SpillState::Pending { task_context } => task_context,
+            _ => {
+                return internal_err!(
+                    "initiate_fallback called in non-Pending spill state"
+                );
+            }
+        };
 
         // Create reservation with can_spill for fair memory allocation
         let reservation = MemoryConsumer::new("NestedLoopJoinLoad[fallback]".to_string())
@@ -1593,9 +1594,9 @@ impl NestedLoopJoinStream {
                     .read_spill_as_stream(Arc::clone(spill_file), None),
                 // The left side yielded no batches; an empty stream drives
                 // the join's normal empty-side handling.
-                None => Ok(Box::pin(crate::EmptyRecordBatchStream::new(
-                    Arc::clone(&spill_data.schema),
-                )) as SendableRecordBatchStream),
+                None => Ok(Box::pin(crate::EmptyRecordBatchStream::new(Arc::clone(
+                    &spill_data.schema,
+                ))) as SendableRecordBatchStream),
             };
             match stream_result {
                 Ok(stream) => {
@@ -3866,7 +3867,9 @@ pub(crate) mod tests {
         let right = build_right_table();
         let filter = prepare_join_filter();
 
-        match join_collect(empty_left, right, &JoinType::Inner, Some(filter), task_ctx).await {
+        match join_collect(empty_left, right, &JoinType::Inner, Some(filter), task_ctx)
+            .await
+        {
             Ok((_columns, batches, _metrics)) => {
                 assert!(batches.is_empty() || batches.iter().all(|b| b.num_rows() == 0));
             }

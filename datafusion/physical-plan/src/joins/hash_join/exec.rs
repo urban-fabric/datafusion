@@ -49,7 +49,7 @@ use crate::joins::{JoinOn, JoinOnRef, PartitionMode, SharedBitmapBuilder};
 use crate::metrics::{Count, MetricBuilder, MetricCategory};
 use crate::projection::{
     EmbeddedProjection, JoinData, ProjectionExec, try_embed_projection,
-    try_pushdown_through_join,
+    try_pushdown_through_join_with_column_indices,
 };
 use crate::repartition::REPARTITION_RANDOM_STATE;
 use crate::statistics::{ChildStats, StatisticsArgs};
@@ -1293,7 +1293,9 @@ impl ExecutionPlan for HashJoinExec {
             ]),
         };
 
-        if self.mode == PartitionMode::Partitioned && self.join_type == JoinType::Inner {
+        if self.mode == PartitionMode::Partitioned
+            && matches!(self.join_type, JoinType::Inner | JoinType::Full)
+        {
             requirements.allow_range_satisfaction_for_key_partitioning()
         } else {
             requirements
@@ -1405,6 +1407,7 @@ impl ExecutionPlan for HashJoinExec {
                             filter,
                             on_right,
                             repartition_random_state,
+                            self.null_aware,
                         ))
                     })))
                 })
@@ -1564,23 +1567,21 @@ impl ExecutionPlan for HashJoinExec {
             return Ok(None);
         }
 
-        // TODO: split by `col`/`JoinSide` instead so mark joins can also push down to children.
         let schema = self.schema();
-        if !matches!(self.join_type(), JoinType::LeftMark | JoinType::RightMark)
-            && let Some(JoinData {
-                projected_left_child,
-                projected_right_child,
-                join_filter,
-                join_on,
-            }) = try_pushdown_through_join(
-                projection,
-                self.left(),
-                self.right(),
-                self.on(),
-                &schema,
-                self.filter(),
-            )?
-        {
+        if let Some(JoinData {
+            projected_left_child,
+            projected_right_child,
+            join_filter,
+            join_on,
+        }) = try_pushdown_through_join_with_column_indices(
+            projection,
+            self.left(),
+            self.right(),
+            self.on(),
+            &schema,
+            self.filter(),
+            self.column_indices.as_slice(),
+        )? {
             self.builder()
                 .with_new_children(vec![
                     Arc::new(projected_left_child),
